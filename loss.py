@@ -360,13 +360,14 @@ class DrainageLoss(torch.nn.Module):
         batch_size = logits.size(0)
         device = logits.device
         dtype = logits.dtype
+        rows = torch.arange(batch_size, device=device)
         logits_drainage = logits[:, self.drainage_idx]  # z_d
-        logits_targets = logits[torch.arange(batch_size), targets]  # z_t
+        logits_targets = logits[rows, targets]  # z_t
 
         # first get logits for the set J (indices other than target and drainage)
         mask_J = torch.ones_like(logits, dtype=bool)
-        mask_J[torch.arange(batch_size),  targets] = False
-        mask_J[torch.arange(batch_size), self.drainage_idx] = False
+        mask_J[rows, targets] = False
+        mask_J[rows, self.drainage_idx] = False
         logits_J = logits.masked_select(mask_J).view(batch_size, -1) #same shape as logits - 2
 
         #compute logsumexp for drainage + J as log(exp(z_d) + sum_j exp(z_j))

@@ -32,7 +32,9 @@ parser.add_argument('--seed', type=int, default=1)
 parser.add_argument('--config', type=str, default='mnist_ce', required=True)
 parser.add_argument('--noise_type', type=str, default='asym', required=True)
 parser.add_argument('--noise_rate', type=float, default=0.0, required=True)
-parser.add_argument('--gpu', action='extend', nargs='+', type=str, required=True)
+parser.add_argument('--gpu', action='extend', nargs='+', type=str,
+                    help='CUDA GPU IDs; not needed for MPS or CPU')
+parser.add_argument('--device', choices=['auto', 'cpu', 'mps', 'cuda'], default='auto')
 parser.add_argument('--dataparallel', action='store_true', default=False)
 parser.add_argument('--tb', action='store_true', default=False)
 parser.add_argument('--eval_freq', type=int, default=1, required=False)
@@ -74,23 +76,38 @@ def build_exp_dirs(args):
 def setup_basic_config(args,logger=None):
     # setup device and random seed
     logger.info('[Basic Config]')
-    os.environ['CUDA_VISIBLE_DEVICES'] = ','.join(args.gpu)
+    if args.gpu and args.device in ['auto', 'cuda']:
+        os.environ['CUDA_VISIBLE_DEVICES'] = ','.join(args.gpu)
     random.seed(args.seed)
     np.random.seed(args.seed)
-    if torch.cuda.is_available():
+    torch.manual_seed(args.seed)
+    if args.device == 'auto':
+        if torch.cuda.is_available():
+            device = torch.device('cuda:0')
+        elif torch.backends.mps.is_available():
+            device = torch.device('mps')
+        else:
+            device = torch.device('cpu')
+    else:
+        device = torch.device('cuda:0' if args.device == 'cuda' else args.device)
+        if device.type == 'cuda' and not torch.cuda.is_available():
+            raise RuntimeError('CUDA was requested but is not available')
+        if device.type == 'mps' and not torch.backends.mps.is_available():
+            raise RuntimeError('MPS was requested but is not available')
+    if args.dataparallel and device.type != 'cuda':
+        raise ValueError('--dataparallel requires CUDA; omit it for MPS or CPU')
+    logger.info('Using %s', device.type.upper())
+    if device.type == 'cuda':
         torch.cuda.manual_seed(args.seed)
         torch.backends.cudnn.enabled = True
         torch.backends.cudnn.benchmark = True
         torch.backends.cudnn.deterministic = True
-        device = torch.device('cuda:0')
-        logger.info('Using CUDA')
         logger.info('CUDA Version: {}'.format(torch.version.cuda))
         device_list = [torch.cuda.get_device_name(i)
                     for i in range(0, torch.cuda.device_count())]
         logger.info('VISIBLE GPU: %s' % (device_list))
-        logger.info('VISIBLE GPU ID: ' + ','.join(args.gpu))
-    else:
-        device = torch.device('cpu')
+        if args.gpu:
+            logger.info('VISIBLE GPU ID: ' + ','.join(args.gpu))
     logger.info('Pytorch Version: {}'.format(torch.__version__))
     logger.info('Seed: {}'.format(args.seed))
     logger.info('Experiment ID: {}'.format(exp_id))
@@ -190,6 +207,17 @@ def main(raw):
            or epoch + 1 == optim_cfg['total_epoch']:
             logger.info('=' * 10 + 'Eval' + '=' * 10)
             results_val = evaluator.eval(model, loss_function, epoch + 1)
+
+    save_path = os.path.join(
+        exp_path_noise,
+        f"seed{args.seed}_epoch{optim_cfg['total_epoch']}_{exp_id}.pt",
+    )
+    weights = {
+        name: tensor.detach().cpu()
+        for name, tensor in model.state_dict().items()
+    }
+    torch.save(weights, save_path)
+    logger.info("Saved weights: %s", save_path)
 
     logger.info('')
     

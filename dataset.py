@@ -141,7 +141,6 @@ def get_instance_noisy_label(n, dataset, labels, num_classes, feature_size, norm
     label_num = num_classes
     np.random.seed(int(seed))
     torch.manual_seed(int(seed))
-    torch.cuda.manual_seed(int(seed))
 
     P = []
     flip_distribution = stats.truncnorm((0 - n) / norm_std, (1 - n) / norm_std, loc=n, scale=norm_std)
@@ -149,16 +148,17 @@ def get_instance_noisy_label(n, dataset, labels, num_classes, feature_size, norm
 
     if isinstance(labels, list):
         labels = torch.FloatTensor(labels)
-    labels = labels.cuda()
+    # Generate noisy labels on CPU independently of the training device.
+    labels = labels.cpu()
 
     W = np.random.randn(label_num, feature_size, label_num)
 
     to_tensor = transforms.ToTensor()
 
-    W = torch.FloatTensor(W).cuda()
+    W = torch.FloatTensor(W)
     for i, (x, y) in enumerate(dataset):
         # 1*m *  m*10 = 1*10
-        x = to_tensor(x).cuda()
+        x = to_tensor(x)
         A = x.view(1, -1).mm(W[y]).squeeze(0)
         A[y] = -inf
         A = flip_rate[i] * F.softmax(A, dim=0)
