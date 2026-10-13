@@ -1,0 +1,2 @@
+# Install after the repository's requirements.txt.
+matplotlib>=3.7,<4
